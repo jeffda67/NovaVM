@@ -35,7 +35,7 @@ jobs:
       - name: Install UTM build prerequisites
         run: |
           brew install bison pkg-config gettext glib-utils libgpg-error nasm make meson cmake
-          brew install llvm spirv-llvm-translator libxcb libxrandr
+          brew install llvm spirv-llvm-translator spirv-tools libxcb libxrandr
           python3 -m pip install --user --break-system-packages six pyparsing pyyaml setuptools distlib mako
           echo "/opt/homebrew/opt/bison/bin:/usr/local/opt/bison/bin" >> "$GITHUB_PATH"
 
