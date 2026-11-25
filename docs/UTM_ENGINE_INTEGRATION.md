@@ -11,6 +11,8 @@ Pinned upstream revision: `utmapp/UTM@3d4b8d8cb1ce93a8b1a9610695c12487685f0c15`.
 - `Vendor/UTM` is a Git submodule pinned to the revision above.
 - The upstream source contains QEMU integration and its CocoaSpice/SPICE/Metal display and input path.
 - `.github/workflows/build-utm-engine.yml` builds the upstream iOS ARM64 dependencies and UTM archive from source on a macOS runner.
+- The build now uses GitHub's `xcode-27` runner because this pinned UTM revision references iOS 27 SDK APIs, including SwiftUI scene accessories. The earlier `macos-26` runner supplied Xcode 26.6 / iOS 26.x SDK and failed compiling those APIs.
+- The workflow verifies that Xcode 27 and an iOS 27 SDK are selected before starting the long native dependency build.
 - The resulting artifact is explicitly an **upstream UTM engine prototype**, not a NovaVM-branded app. It is a validation/build milestone; the current NovaVM SwiftUI shell is still not linked to the QEMU runtime.
 
 Initialize source locally:
@@ -58,5 +60,3 @@ The NovaVM integration is not complete until all are true on a physical iPad:
 - Touch/pointer and keyboard input reach the guest.
 - VM stop/restart works without corrupting the disk.
 - The IPA is installable using the user's intended signing/sideloading method.
-
-A green CI check for the SwiftUI shell alone does not satisfy these criteria.
