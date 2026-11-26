@@ -1,0 +1,152 @@
+name: Build UTM iOS Engine Prototype
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - integration/utm-qemu-base
+    paths:
+      - "Vendor/UTM"
+      - ".gitmodules"
+      - ".github/workflows/build-utm-engine.yml"
+      - "docs/UTM_ENGINE_INTEGRATION.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: utm-ios-engine-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-utm-ios:
+    name: Build upstream UTM for iPad (ARM64)
+    # The pinned UTM revision uses iOS 27 SDK APIs (including sceneAccessory).
+    # macos-26 supplied Xcode 26.6 / iOS 26.x SDK and cannot compile that source.
+    runs-on: xcode-27
+    timeout-minutes: 360
+    steps:
+      - name: Checkout NovaVM and pinned UTM source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select and verify Xcode 27 / iOS 27 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+          # Capture command output before checking it. Piping xcodebuild into
+          # grep -q closes stdout early and can crash xcodebuild with SIGPIPE.
+          XCODE_VERSION="$(xcodebuild -version)"
+          IOS_SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+
+          printf '%s\n' "$XCODE_VERSION"
+          printf 'iOS SDK: %s\n' "$IOS_SDK_VERSION"
+
+          if [[ "$XCODE_VERSION" != *"Xcode 27."* ]]; then
+            echo "::error::Expected Xcode 27.x, got: $XCODE_VERSION"
+            exit 1
+          fi
+
+          if [[ "$IOS_SDK_VERSION" != 27.* ]]; then
+            echo "::error::Expected iOS SDK 27.x, got: $IOS_SDK_VERSION"
+            exit 1
+          fi
+
+      - name: Install UTM build prerequisites
+        run: |
+          brew install bison pkg-config gettext glib-utils libgpg-error nasm make meson cmake
+          brew install llvm spirv-llvm-translator spirv-tools libxcb libxrandr
+          python3 -m pip install --user --break-system-packages six pyparsing pyyaml setuptools distlib mako
+          echo "/opt/homebrew/opt/bison/bin:/usr/local/opt/bison/bin" >> "$GITHUB_PATH"
+
+      - name: Patch upstream dependency script to build iOS DXMT
+        working-directory: Vendor/UTM
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/build_dependencies.sh")
+          source = path.read_text()
+          start = source.index("build_d3d_drivers () {")
+          end = source.index("\n}\n\nfixup_all ()", start) + 2
+          replacement = """build_d3d_drivers () {
+              LLVM15_NAME=$(basename "\${LLVM15_SRC%.tar.*}")
+              cmake_build "$BUILD_DIR/$LLVM15_NAME/llvm" -DLLVM_ENABLE_ZSTD=Off -DLLVM_TARGETS_TO_BUILD="" -DLLVM_BUILD_TOOLS=Off -DLLVM_VERSION_PRINTER_SHOW_HOST_TARGET_INFO=Off -DLLVM_ENABLE_TERMINFO=Off
+              (
+                  case $PLATFORM in
+                  ios* )
+                      DXMT_SDKMINVER="16.0"
+                      ;;
+                  macos )
+                      DXMT_SDKMINVER="13.0"
+                      ;;
+                  * )
+                      DXMT_SDKMINVER="$SDKMINVER"
+                      ;;
+                  esac
+                  DXMT_CFLAGS_TARGET="\${CFLAGS_TARGET/$SDKMINVER/$DXMT_SDKMINVER}"
+                  CC="\${CC/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                  CPPFLAGS="\${CPPFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                  CXXFLAGS="\${CXXFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                  OBJCFLAGS="\${OBJCFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                  LDFLAGS="\${LDFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                  MESON_CROSS_SUFFIX="-dxmt"
+                  DXN_DIR="$BUILD_DIR/dxmt.git/subprojects/directx-native"
+                  mkdir -p "$(dirname "$DXN_DIR")"
+                  if [ ! -d "$DXN_DIR/.git" ]; then
+                      git clone https://github.com/osy/directx-native.git "$DXN_DIR"
+                  fi
+                  git -C "$DXN_DIR" fetch --depth 1 origin 7258be1c56cdbf1e55c56b1bc4a866169c8ca0da
+                  git -C "$DXN_DIR" checkout --detach 7258be1c56cdbf1e55c56b1bc4a866169c8ca0da
+                  meson_darwin_build $DXMT_REPO -Dnative_llvm_path="$PREFIX"
+              )
+              if [ "$ARCH" == "x86_64" -a "$PLATFORM" == "macos" ]; then
+                  meson_build $D3DMETAL_REPO -Dtests=disabled
+                  mkdir -p "$PREFIX/share/d3dmetal-native"
+                  cp "$BUILD_DIR/$(basename $D3DMETAL_REPO)/scripts/patch_d3dmetal_imports.py" "$PREFIX/share/d3dmetal-native/"
+              else
+                  $CC -dynamiclib -x c /dev/null -o "$PREFIX/lib/libd3dmetal-native.dylib"
+              fi
+          }"""
+          path.write_text(source[:start] + replacement + source[end:])
+          PY
+
+      - name: Build UTM iOS ARM64 dependencies (QEMU, SPICE, graphics stack)
+        working-directory: Vendor/UTM
+        env:
+          NCPU: "2"
+        run: |
+          set -euo pipefail
+          ./scripts/build_dependencies.sh -p ios -a arm64
+
+      - name: Build upstream UTM iOS app archive
+        working-directory: Vendor/UTM
+        run: |
+          set -euo pipefail
+          ./scripts/build_utm.sh -k iphoneos -s iOS -a arm64 -o "$GITHUB_WORKSPACE/build/utm"
+
+      - name: Package unsigned UTM engine prototype IPA
+        working-directory: Vendor/UTM
+        run: |
+          set -euo pipefail
+          ARCHIVE="$(find "$GITHUB_WORKSPACE/build/utm" -maxdepth 1 -name '*.xcarchive' -print -quit)"
+          test -n "$ARCHIVE"
+          mkdir -p "$GITHUB_WORKSPACE/build/ipa"
+          ./scripts/package.sh ipa "$ARCHIVE" "$GITHUB_WORKSPACE/build/ipa"
+          test -s "$GITHUB_WORKSPACE/build/ipa/UTM.ipa"
+          cp "$GITHUB_WORKSPACE/build/ipa/UTM.ipa" "$GITHUB_WORKSPACE/build/NovaVM-UTM-engine-prototype.ipa"
+
+      - name: Upload engine prototype and archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: NovaVM-UTM-engine-prototype
+          path: |
+            build/NovaVM-UTM-engine-prototype.ipa
+            build/utm/*.xcarchive/**
+          if-no-files-found: error
+          retention-days: 14

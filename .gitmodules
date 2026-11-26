@@ -1,0 +1,3 @@
+[submodule "Vendor/UTM"]
+	path = Vendor/UTM
+	url = https://github.com/utmapp/UTM.git

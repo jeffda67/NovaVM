@@ -1,37 +1,30 @@
 # NovaVM
 
-NovaVM is a native SwiftUI iPad app foundation for running ARM64 virtual machines with an in-app graphical display.
+NovaVM is a native iPad VM project targeting ARM64 guests with a real graphical desktop rendered inside the app.
 
-> **Current status:** this repository starts with the native app shell, VM profile model, guest display surface, and unsigned IPA CI pipeline. A QEMU runtime and its display/input bridge are **not yet integrated**. The display currently shows an explicit placeholder instead of pretending a guest is running.
+> **Current status:** the SwiftUI shell builds. The QEMU runtime is not yet connected to NovaVM's shell. The integration branch pins upstream UTM/QEMU and adds a CI workflow that builds the complete upstream UTM iOS app as an engine-validation artifact. That artifact is UTM, not yet the final NovaVM-branded app.
+
+## Engine foundation
+
+- Upstream engine/frontend: [UTM](https://github.com/utmapp/UTM), pinned at `Vendor/UTM`.
+- QEMU supplies system emulation; CocoaSpice/SPICE and Metal provide the graphical display and input path.
+- See `docs/UTM_ENGINE_INTEGRATION.md` for the integration plan and iOS constraints.
+
+## Build validation
+
+Run **Build UTM iOS Engine Prototype** from the Actions tab (or push to `integration/utm-qemu-base`). It builds UTM's iOS ARM64 dependencies, QEMU/SPICE stack, and upstream iOS app archive, then uploads an unsigned engine-prototype IPA and archive.
+
+The prototype retains UTM's upstream app identity and is not the final NovaVM app. The existing `Build NovaVM IPA` workflow only builds the SwiftUI shell.
 
 ## Goals
 
-- Render a real Windows/Linux guest desktop inside the app (not a serial terminal).
-- Start with ARM64 guests on Apple Silicon iPad hardware.
-- Provide touch, keyboard, and pointer input.
-- Manage VM profiles and virtual disk images.
-- Add a real QEMU backend and framebuffer/display transport in a later integration step.
-- Investigate supported JIT enablement paths separately; iOS cannot grant unrestricted JIT to itself.
+- Actual Windows/Linux graphical desktop in-app, not a terminal-only substitute.
+- ARM64 guests first on Apple Silicon iPad.
+- Touch, keyboard, pointer, VM lifecycle, and disk-image management.
+- Honest JIT/performance support based on the device's actual signing and launch path.
 
-## Repository layout
+## Signing and licensing
 
-- `NovaVM/` — SwiftUI application source.
-- `project.yml` — XcodeGen project definition.
-- `.github/workflows/build-ipa.yml` — unsigned device IPA build.
-- `docs/ENGINE_INTEGRATION.md` — QEMU/display/input integration plan.
+Unsigned packages are not App Store-signed. Installation requires a compatible sideloading method; privileged entitlements/JIT behavior cannot be assumed on stock iPadOS.
 
-## Build
-
-The GitHub Actions workflow builds an **unsigned** iOS device IPA. It can be installed only through a compatible signing/sideloading workflow; it is not an App Store-signed IPA.
-
-For a local build with XcodeGen installed:
-
-```sh
-brew install xcodegen
-xcodegen generate
-xcodebuild -project NovaVM.xcodeproj -scheme NovaVM -sdk iphoneos -configuration Release CODE_SIGNING_ALLOWED=NO build
-```
-
-## Important limitations
-
-The initial scaffold does not boot guest operating systems yet. A genuine graphical VM requires a QEMU build configured for iOS/arm64 plus a working display and input bridge. The app intentionally reports the backend as unavailable until that work is completed.
+UTM is Apache-2.0, but its dependency tree includes components under other licenses (including LGPL/GPL components). Preserve upstream notices and comply with all applicable licenses before distributing a NovaVM build that incorporates those components.
