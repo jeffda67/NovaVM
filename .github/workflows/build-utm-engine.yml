@@ -75,8 +75,9 @@ jobs:
           start = source.index("build_d3d_drivers () {")
           end = source.index("\n}\n\nfixup_all ()", start) + 2
           replacement = """build_d3d_drivers () {
-              LLVM_SRC_DIR="$(find "$BUILD_DIR" -maxdepth 5 -type d -name llvm -print -quit)"
-              if [ -z "$LLVM_SRC_DIR" ] || [ ! -f "$LLVM_SRC_DIR/CMakeLists.txt" ]; then
+              LLVM15_NAME="$(basename "${LLVM15_SRC%.tar.*}")"
+              LLVM_SRC_DIR="$BUILD_DIR/$LLVM15_NAME/llvm"
+              if [ ! -f "$LLVM_SRC_DIR/CMakeLists.txt" ] || ! grep -q "project(LLVM" "$LLVM_SRC_DIR/CMakeLists.txt"; then
                   echo "::error::LLVM source directory not found under $BUILD_DIR after download/extraction"
                   find "$BUILD_DIR" -maxdepth 4 -type d -print | head -200
                   exit 1
