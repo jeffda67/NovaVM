@@ -62,6 +62,46 @@ jobs:
           python3 -m pip install --user --break-system-packages six pyparsing pyyaml setuptools distlib mako
           echo "/opt/homebrew/opt/bison/bin:/usr/local/opt/bison/bin" >> "$GITHUB_PATH"
 
+      - name: Patch upstream dependency script for iOS
+        working-directory: Vendor/UTM
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/build_dependencies.sh")
+          source = path.read_text()
+          start = source.index("build_d3d_drivers () {")
+          end = source.index("\n}\n\nfixup_all ()", start) + 2
+          replacement = """build_d3d_drivers () {
+              # DXMT and LLVM are only needed for x86_64 macOS guests.
+              # Building DXMT for iOS triggers an unavailable DirectX dependency.
+              if [ "$ARCH" == "x86_64" -a "$PLATFORM" == "macos" ]; then
+                  LLVM15_NAME=$(basename "${LLVM15_SRC%.tar.*}")
+                  cmake_build "$BUILD_DIR/$LLVM15_NAME/llvm" -DLLVM_ENABLE_ZSTD=Off -DLLVM_TARGETS_TO_BUILD="" -DLLVM_BUILD_TOOLS=Off -DLLVM_VERSION_PRINTER_SHOW_HOST_TARGET_INFO=Off -DLLVM_ENABLE_TERMINFO=Off
+                  (
+                      DXMT_SDKMINVER="13.0"
+                      DXMT_CFLAGS_TARGET="${CFLAGS_TARGET/$SDKMINVER/$DXMT_SDKMINVER}"
+                      CC="${CC/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                      CPPFLAGS="${CPPFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                      CXXFLAGS="${CXXFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                      OBJCFLAGS="${OBJCFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                      LDFLAGS="${LDFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                      MESON_CROSS_SUFFIX="-dxmt"
+                      meson_darwin_build $DXMT_REPO -Dnative_llvm_path="$PREFIX"
+                  )
+                  meson_build $D3DMETAL_REPO -Dtests=disabled
+                  mkdir -p "$PREFIX/share/d3dmetal-native"
+                  cp "$BUILD_DIR/$(basename $D3DMETAL_REPO)/scripts/patch_d3dmetal_imports.py" "$PREFIX/share/d3dmetal-native/"
+              else
+                  # Keep the placeholder expected by UTM's packaging scripts.
+                  $CC -dynamiclib -x c /dev/null -o "$PREFIX/lib/libd3dmetal-native.dylib"
+              fi
+          }"""
+          path.write_text(source[:start] + replacement + source[end:])
+          PY
+
       - name: Build UTM iOS ARM64 dependencies (QEMU, SPICE, graphics stack)
         working-directory: Vendor/UTM
         env:
