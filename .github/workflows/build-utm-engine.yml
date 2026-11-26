@@ -62,7 +62,7 @@ jobs:
           python3 -m pip install --user --break-system-packages six pyparsing pyyaml setuptools distlib mako
           echo "/opt/homebrew/opt/bison/bin:/usr/local/opt/bison/bin" >> "$GITHUB_PATH"
 
-      - name: Patch upstream dependency script for iOS
+      - name: Patch upstream dependency script to build iOS DXMT
         working-directory: Vendor/UTM
         shell: bash
         run: |
@@ -75,27 +75,41 @@ jobs:
           start = source.index("build_d3d_drivers () {")
           end = source.index("\n}\n\nfixup_all ()", start) + 2
           replacement = """build_d3d_drivers () {
-              # DXMT and LLVM are only needed for x86_64 macOS guests.
-              # Building DXMT for iOS triggers an unavailable DirectX dependency.
-              if [ "$ARCH" == "x86_64" -a "$PLATFORM" == "macos" ]; then
-                  LLVM15_NAME=$(basename "${LLVM15_SRC%.tar.*}")
-                  cmake_build "$BUILD_DIR/$LLVM15_NAME/llvm" -DLLVM_ENABLE_ZSTD=Off -DLLVM_TARGETS_TO_BUILD="" -DLLVM_BUILD_TOOLS=Off -DLLVM_VERSION_PRINTER_SHOW_HOST_TARGET_INFO=Off -DLLVM_ENABLE_TERMINFO=Off
-                  (
+              LLVM15_NAME=$(basename "\${LLVM15_SRC%.tar.*}")
+              cmake_build "$BUILD_DIR/$LLVM15_NAME/llvm" -DLLVM_ENABLE_ZSTD=Off -DLLVM_TARGETS_TO_BUILD="" -DLLVM_BUILD_TOOLS=Off -DLLVM_VERSION_PRINTER_SHOW_HOST_TARGET_INFO=Off -DLLVM_ENABLE_TERMINFO=Off
+              (
+                  case $PLATFORM in
+                  ios* )
+                      DXMT_SDKMINVER="16.0"
+                      ;;
+                  macos )
                       DXMT_SDKMINVER="13.0"
-                      DXMT_CFLAGS_TARGET="${CFLAGS_TARGET/$SDKMINVER/$DXMT_SDKMINVER}"
-                      CC="${CC/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
-                      CPPFLAGS="${CPPFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
-                      CXXFLAGS="${CXXFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
-                      OBJCFLAGS="${OBJCFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
-                      LDFLAGS="${LDFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
-                      MESON_CROSS_SUFFIX="-dxmt"
-                      meson_darwin_build $DXMT_REPO -Dnative_llvm_path="$PREFIX"
-                  )
+                      ;;
+                  * )
+                      DXMT_SDKMINVER="$SDKMINVER"
+                      ;;
+                  esac
+                  DXMT_CFLAGS_TARGET="\${CFLAGS_TARGET/$SDKMINVER/$DXMT_SDKMINVER}"
+                  CC="\${CC/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                  CPPFLAGS="\${CPPFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                  CXXFLAGS="\${CXXFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                  OBJCFLAGS="\${OBJCFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                  LDFLAGS="\${LDFLAGS/$CFLAGS_TARGET/$DXMT_CFLAGS_TARGET}"
+                  MESON_CROSS_SUFFIX="-dxmt"
+                  DXN_DIR="$BUILD_DIR/dxmt.git/subprojects/directx-native"
+                  mkdir -p "$(dirname "$DXN_DIR")"
+                  if [ ! -d "$DXN_DIR/.git" ]; then
+                      git clone https://github.com/osy/directx-native.git "$DXN_DIR"
+                  fi
+                  git -C "$DXN_DIR" fetch --depth 1 origin 7258be1c56cdbf1e55c56b1bc4a866169c8ca0da
+                  git -C "$DXN_DIR" checkout --detach 7258be1c56cdbf1e55c56b1bc4a866169c8ca0da
+                  meson_darwin_build $DXMT_REPO -Dnative_llvm_path="$PREFIX"
+              )
+              if [ "$ARCH" == "x86_64" -a "$PLATFORM" == "macos" ]; then
                   meson_build $D3DMETAL_REPO -Dtests=disabled
                   mkdir -p "$PREFIX/share/d3dmetal-native"
                   cp "$BUILD_DIR/$(basename $D3DMETAL_REPO)/scripts/patch_d3dmetal_imports.py" "$PREFIX/share/d3dmetal-native/"
               else
-                  # Keep the placeholder expected by UTM's packaging scripts.
                   $CC -dynamiclib -x c /dev/null -o "$PREFIX/lib/libd3dmetal-native.dylib"
               fi
           }"""
